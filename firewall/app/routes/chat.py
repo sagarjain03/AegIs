@@ -44,10 +44,16 @@ async def chat_handler(request: ChatRequest, db: AsyncSession = Depends(get_db))
     try:
         # 1. Validation (Pydantic handles basic validation)
         
-        # 2. Rule-based Detection
-        detection_result = detector.detect(request.prompt)
-        injection_score = detection_result["injection_score"]
-        matched_categories = detection_result["matched_categories"]
+        # 2. Rule-based Detection (Keep as fallback or complementary?)
+        # For Phase-2 Integration, we use ML Service primarily, but can keep rule-based as local check
+        # Let's combine them or just use ML. Specification says "Connect Firewall <-> ML".
+        # We will use ML score.
+        
+        # Call ML Service
+        ml_result = await ml_client.analyze(request.prompt, request.session_id)
+        injection_score = ml_result.get("injection_score", 0.0)
+        ml_label = ml_result.get("label", "unknown")
+        keywords = ml_result.get("keywords", [])
         
         # 3. Policy Check
         tool_name = request.tool_request.tool_name if request.tool_request else None
@@ -63,12 +69,14 @@ async def chat_handler(request: ChatRequest, db: AsyncSession = Depends(get_db))
         evaluation = risk_engine.evaluate(final_risk, authorized)
         blocked = evaluation["blocked"]
         reasons = evaluation["reasons"]
-        if policy_reason and policy_reason not in reasons:  # Add specific policy reason if not redundant
-             reasons.insert(0, policy_reason) # High priority
+        
+        if policy_reason and policy_reason not in reasons:
+             reasons.insert(0, policy_reason)
+             
+        if keywords:
+            reasons.append(f"ML Flagged: {', '.join(keywords)}")
 
         # 6. Log to DB
-        # Ensure matched_categories is list of strings
-        
         log_entry = LogEntry(
             user_id=request.user_id,
             session_id=request.session_id,
@@ -77,7 +85,7 @@ async def chat_handler(request: ChatRequest, db: AsyncSession = Depends(get_db))
             tool_score=tool_score,
             final_risk=final_risk,
             blocked=blocked,
-            matched_categories=matched_categories,
+            matched_categories=str(keywords) if keywords else "[]", # Storing keywords in matched_categories for now
             timestamp=datetime.utcnow()
         )
         db.add(log_entry)
@@ -86,7 +94,8 @@ async def chat_handler(request: ChatRequest, db: AsyncSession = Depends(get_db))
         logger_props = {
             "session_id": request.session_id,
             "blocked": blocked,
-            "risk": final_risk
+            "risk": final_risk,
+            "ml_label": ml_label
         }
         logger.info("Processed chat request", extra={"props": logger_props})
 
