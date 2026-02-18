@@ -34,4 +34,5 @@ class PromptResponse(BaseModel):
 @router.post("/analyze_prompt", response_model=PromptResponse)
 async def analyze_prompt(request: PromptRequest):
     result = analyze_injection(request.prompt, request.session_id)
+    result = analyze_injection(request.prompt, request.session_id)
     return result
