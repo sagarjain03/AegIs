@@ -1,4 +1,6 @@
-<<<<<<< HEAD
+<<<<<<<<< Temporary merge branch 1
+ml_service/venv
+=========
 
 
 ### NextJS ###
@@ -224,6 +226,4 @@ psd
 thumb
 sketch
 
-=======
-ml_service/venv
->>>>>>> cd00e464a7f98f61fe002d389b1dc3f6a3e801a8
+>>>>>>>>> Temporary merge branch 2
