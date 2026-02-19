@@ -111,7 +111,7 @@ def _get_model() -> InjectionModel | None:
     global _injection_model
     if _injection_model is None:
         base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        model_path = os.path.join(base_dir, "models", "distilbert_injection_model")
+        model_path = os.path.join(base_dir, "models", "aegis_injection_model")
         try:
             _injection_model = InjectionModel(model_path)
         except Exception as e:
@@ -187,14 +187,18 @@ def analyze_injection(prompt: str, session_id: str = "unknown") -> dict:
     try:
         start = time.time()
 
-        # 3. DistilBERT prediction
+        # 3. DistilBERT prediction (with timing)
+        bert_start = time.time()
         bert_result = model.predict(cleaned)
         bert_score = bert_result["injection_score"]
+        bert_time = round((time.time() - bert_start) * 1000, 2)
 
         # 4. Hybrid scoring (configurable via threshold_config)
+        rule_start = time.time()
         rule_result = compute_rule_score(cleaned)
         rule_score = rule_result["rule_score"]
         keywords_triggered = rule_result["keywords_triggered"]
+        rule_time = round((time.time() - rule_start) * 1000, 2)
 
         if USE_HYBRID:
             final_score = (
@@ -218,11 +222,13 @@ def analyze_injection(prompt: str, session_id: str = "unknown") -> dict:
 
         inference_ms = round((time.time() - start) * 1000, 2)
 
-        # 7. Structured logging
+        # 7. Detailed structured logging (DEBUG: component breakdown)
         logger.info(
             f"Session: {session_id} | len={len(prompt)} | "
-            f"bert={bert_score:.4f} rule={rule_score:.4f} final={final_score:.4f} | "
-            f"label={label} | {inference_ms}ms"
+            f"BERT={bert_score:.4f}({bert_time}ms) RULE={rule_score:.4f}({rule_time}ms) "
+            f"FINAL={final_score:.4f} | "
+            f"THRESHOLD={INJECTION_THRESHOLD:.4f} | "
+            f"label={label} | total={inference_ms}ms"
         )
 
         return {
