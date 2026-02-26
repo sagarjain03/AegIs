@@ -34,6 +34,10 @@ class LogEntry(Base):
     final_risk: Mapped[float] = mapped_column(Float, nullable=False)
     blocked: Mapped[bool] = mapped_column(Boolean, nullable=False)
     matched_categories: Mapped[list] = mapped_column(JSON, nullable=False)
+    risk_level: Mapped[str] = mapped_column(String, nullable=False)
+    token_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    request_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    session_risk: Mapped[float] = mapped_column(Float, nullable=False)
     timestamp: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 # Dependency
