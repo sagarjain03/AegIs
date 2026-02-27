@@ -1,11 +1,21 @@
-from typing import Dict, Any
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
-
 from app.db.database import LogEntry
+import time
 
 
 class BehaviourEngine:
+
+    def __init__(self):
+
+        # UEBA Weights
+        self.risk_weight = 0.25
+        self.frequency_weight = 0.05
+        self.token_weight = 0.05
+
+        # Thresholds
+        self.frequency_threshold = 5
+        self.token_spike_threshold = 50
 
     async def analyze_session(
         self,
@@ -13,83 +23,89 @@ class BehaviourEngine:
         prompt: str,
         injection_score: float,
         db: AsyncSession
-    ) -> Dict[str, Any]:
+    ):
 
-        # ------------------------
-        # 1. Count previous requests
-        # ------------------------
+        # --------------------------
+        # Token Estimation
+        # --------------------------
+
+        token_count = len(prompt.split())
+
+        # --------------------------
+        # Request Count
+        # --------------------------
 
         stmt = select(func.count(LogEntry.id)).where(
             LogEntry.session_id == session_id
         )
 
         result = await db.execute(stmt)
-        request_count = result.scalar() or 0
 
-        request_index = request_count + 1
-
-
-        # ------------------------
-        # 2. Token estimation
-        # ------------------------
-
-        # Simple estimation:
-        # 1 token ≈ 4 characters
-
-        token_count = max(1, len(prompt) // 4)
+        request_index = result.scalar() + 1
 
 
-        # ------------------------
-        # 3. Calculate Session Risk
-        # ------------------------
+        # --------------------------
+        # Previous Session Risk
+        # --------------------------
 
-        # Fetch previous risks
-
-        stmt = select(LogEntry.final_risk).where(
+        stmt = select(LogEntry).where(
             LogEntry.session_id == session_id
-        )
+        ).order_by(LogEntry.id.desc()).limit(1)
 
         result = await db.execute(stmt)
 
-        previous_risks = result.scalars().all()
+        last_log = result.scalar_one_or_none()
+
+        previous_risk = last_log.session_risk if last_log else 0.0
 
 
-        if previous_risks:
+        # --------------------------
+        # Risk Escalation
+        # --------------------------
 
-            avg_previous_risk = sum(previous_risks) / len(previous_risks)
-
-            session_risk = round(
-                (avg_previous_risk * 0.7) +
-                (injection_score * 0.3),
-                2
-            )
-
-        else:
-            session_risk = injection_score
+        session_risk = previous_risk + (injection_score * self.risk_weight)
 
 
-        # ------------------------
-        # 4. Risk Level Classification
-        # ------------------------
+        # --------------------------
+        # Frequency Detection
+        # --------------------------
 
-        if session_risk >= 0.75:
+        if request_index > self.frequency_threshold:
+
+            session_risk += self.frequency_weight
+
+
+        # --------------------------
+        # Token Spike Detection
+        # --------------------------
+
+        if token_count > self.token_spike_threshold:
+
+            session_risk += self.token_weight
+
+
+        # --------------------------
+        # Risk Level
+        # --------------------------
+
+        if session_risk > 0.8:
             risk_level = "critical"
 
-        elif session_risk >= 0.5:
+        elif session_risk > 0.5:
             risk_level = "high"
 
-        elif session_risk >= 0.25:
+        elif session_risk > 0.2:
             risk_level = "medium"
 
         else:
-            risk_level = "low"
+            risk_level = "safe"
 
 
         return {
 
             "request_index": request_index,
             "token_count": token_count,
-            "session_risk": session_risk,
+            "session_risk": round(session_risk, 3),
             "risk_level": risk_level
 
         }
