@@ -3,13 +3,15 @@ from pydantic import BaseModel, Field
 from typing import Optional, List
 from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime
-
+from sqlalchemy import select, func
 from app.core.rule_based_detector import RuleBasedDetector
 from app.core.policy_engine import PolicyEngine
 from app.core.risk_engine import RiskEngine
 from app.core.logger import get_logger
 from app.db.database import get_db, LogEntry
 from app.services.ml_client import MLClient
+
+from app.core.behaviour_engine import BehaviourEngine
 
 router = APIRouter()
 logger = get_logger()
@@ -18,6 +20,7 @@ logger = get_logger()
 detector = RuleBasedDetector()
 policy_engine = PolicyEngine()
 risk_engine = RiskEngine()
+behaviour_engine = BehaviourEngine()
 ml_client = MLClient()
 
 # Request Model
@@ -58,7 +61,17 @@ async def chat_handler(request: ChatRequest, db: AsyncSession = Depends(get_db))
 
         # 4. Risk Calculation
         final_risk = risk_engine.calculate_risk(injection_score, tool_score)
+        behaviour_result = await behaviour_engine.analyze_session(
+        request.session_id,
+        request.prompt,
+        injection_score,
+        db
+        )
 
+        request_index = behaviour_result["request_index"]
+        token_count = behaviour_result["token_count"]
+        session_risk = behaviour_result["session_risk"]
+        risk_level = behaviour_result["risk_level"]
         # 5. Apply Thresholds
         evaluation = risk_engine.evaluate(final_risk, authorized)
         blocked = evaluation["blocked"]
@@ -68,40 +81,26 @@ async def chat_handler(request: ChatRequest, db: AsyncSession = Depends(get_db))
              reasons.insert(0, policy_reason) # High priority
 
         # 6. Log to DB
-
-        # Ensure matched_categories is list of strings
-        # Basic token estimation (prototype level)
-        token_count = len(request.prompt.split())
-
-                # Calculate request index in session
-        stmt = select(func.count(LogEntry.id)).where(
-            LogEntry.session_id == request.session_id
-        )
-
-        result = await db.execute(stmt)
-        request_index = result.scalar() + 1
-
-        # Temporary session risk (will be improved by behavior engine)
-        session_risk = final_risk
+        
 
         log_entry = LogEntry(
-             user_id=request.user_id,
-             session_id=request.session_id,
-             prompt=request.prompt,
-             injection_score=injection_score,
-             tool_score=tool_score,
-             final_risk=final_risk,
-             blocked=blocked,
-             matched_categories=matched_categories,
-             risk_level=risk_level,
-             token_count=token_count,
-             request_index=request_index,
-             session_risk=session_risk,
-             timestamp=datetime.utcnow()
-)
+            user_id=request.user_id,
+            session_id=request.session_id,
+            prompt=request.prompt,
+            injection_score=injection_score,
+            tool_score=tool_score,
+            final_risk=final_risk,
+            blocked=blocked,
+            matched_categories=matched_categories,
+            risk_level=risk_level,
+            token_count=token_count,
+            request_index=request_index,
+            session_risk=session_risk,
+            timestamp=datetime.utcnow()
+        )
+
         db.add(log_entry)
         await db.commit()
-
         logger_props = {
             "session_id": request.session_id,
             "blocked": blocked,
